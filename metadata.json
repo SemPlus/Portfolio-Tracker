@@ -1,0 +1,5 @@
+{
+  "name": "Portfolio Tracker",
+  "description": "Real-time portfolio tracker for Stocks, ETFs, and Cryptocurrencies with historical performance graphs.",
+  "requestFramePermissions": []
+}
