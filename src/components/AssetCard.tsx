@@ -184,7 +184,7 @@ export default function AssetCard({ asset, quote, onDelete, portfolioName }: Pro
             </div>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-6 mb-6">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-6 mb-6">
             <div>
               <p className="text-zinc-500 text-xs uppercase tracking-wider mb-1">Quantity</p>
               <p className="text-zinc-200 font-mono">{quantity.toFixed(4)}</p>
@@ -200,10 +200,22 @@ export default function AssetCard({ asset, quote, onDelete, portfolioName }: Pro
               </p>
             </div>
             <div>
+              <p className="text-zinc-500 text-xs uppercase tracking-wider mb-1">Yield</p>
+              <p className="text-zinc-200 font-mono">
+                {quote?.dividendYield ? `${(quote.dividendYield * 100).toFixed(2)}%` : '—'}
+              </p>
+            </div>
+            <div>
+              <p className="text-zinc-500 text-xs uppercase tracking-wider mb-1">Sector</p>
+              <p className="text-zinc-200 font-mono truncate" title={quote?.sector || 'N/A'}>
+                {quote?.sector || 'N/A'}
+              </p>
+            </div>
+            <div>
               <p className="text-zinc-500 text-xs uppercase tracking-wider mb-1">Purchase Date</p>
               <p className="text-zinc-200 font-mono">
                 {asset.purchase_date.includes('T') 
-                  ? format(parseISO(asset.purchase_date), 'MMM d, yyyy HH:mm')
+                  ? format(parseISO(asset.purchase_date), 'MMM d, yyyy')
                   : format(parseISO(asset.purchase_date), 'MMM d, yyyy')}
               </p>
             </div>

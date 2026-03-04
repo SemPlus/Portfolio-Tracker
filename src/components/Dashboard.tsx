@@ -4,6 +4,7 @@ import { Asset, Quote, ChartDataPoint, Portfolio } from '../types';
 import AssetCard from './AssetCard';
 import PortfolioChart from './PortfolioChart';
 import AddAssetModal from './AddAssetModal';
+import AllocationCharts from './AllocationCharts';
 
 export default function Dashboard() {
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -14,6 +15,7 @@ export default function Dashboard() {
   const [isAddingPortfolio, setIsAddingPortfolio] = useState(false);
   const [newPortfolioName, setNewPortfolioName] = useState('');
   const [period, setPeriod] = useState('1M');
+  const [showBenchmark, setShowBenchmark] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -163,20 +165,24 @@ export default function Dashboard() {
     }
   };
 
-  // Calculate portfolio summary
-  const totalValue = assets.reduce((sum, asset) => {
-    const price = quotes[asset.symbol]?.regularMarketPrice || 0;
-    const qty = asset.quantity !== null ? asset.quantity : 0;
-    return sum + (qty * price);
-  }, 0);
-
-  const totalInvested = assets.reduce((sum, asset) => {
-    return sum + (asset.invested_amount !== null ? asset.invested_amount : 0);
-  }, 0);
+  // Calculate portfolio summary (using USD base from chart data if available, or calculating from quotes)
+  // Note: chartData contains aggregated USD values from backend
+  const latestData = chartData[chartData.length - 1];
+  const totalValue = latestData?.totalValue || 0;
+  const totalInvested = latestData?.totalInvested || 0;
 
   const totalGain = totalValue - totalInvested;
   const totalGainPercent = totalInvested > 0 ? (totalGain / totalInvested) * 100 : 0;
   const isPositive = totalGain >= 0;
+
+  // Dividend calculations
+  const annualDividend = assets.reduce((sum, asset) => {
+    const quote = quotes[asset.symbol];
+    if (!quote?.trailingAnnualDividendRate) return sum;
+    return sum + (asset.quantity || 0) * quote.trailingAnnualDividendRate;
+  }, 0);
+
+  const portfolioYield = totalValue > 0 ? (annualDividend / totalValue) * 100 : 0;
 
   const formatCurrency = (val: number) => 
     new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
@@ -299,26 +305,36 @@ export default function Dashboard() {
         )}
 
         {/* Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-2xl p-6">
-            <p className="text-zinc-500 text-sm font-medium mb-2 uppercase tracking-wider">Total Balance</p>
-            <p className="text-4xl font-light tracking-tight">{formatCurrency(totalValue)}</p>
+            <p className="text-zinc-500 text-xs font-medium mb-2 uppercase tracking-wider">Total Balance</p>
+            <p className="text-3xl font-light tracking-tight">{formatCurrency(totalValue)}</p>
           </div>
           
           <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-2xl p-6">
-            <p className="text-zinc-500 text-sm font-medium mb-2 uppercase tracking-wider">Cost Basis</p>
+            <p className="text-zinc-500 text-xs font-medium mb-2 uppercase tracking-wider">Cost Basis</p>
             <p className="text-3xl font-light tracking-tight text-zinc-300">{formatCurrency(totalInvested)}</p>
           </div>
           
           <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-2xl p-6">
-            <p className="text-zinc-500 text-sm font-medium mb-2 uppercase tracking-wider">Total Return</p>
+            <p className="text-zinc-500 text-xs font-medium mb-2 uppercase tracking-wider">Total Return</p>
             <div className="flex items-end space-x-3">
               <p className={`text-3xl font-light tracking-tight ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>
                 {isPositive ? '+' : ''}{formatCurrency(totalGain)}
               </p>
               <div className={`flex items-center pb-1 text-sm font-medium ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>
                 {isPositive ? <TrendingUp size={16} className="mr-1" /> : <TrendingDown size={16} className="mr-1" />}
-                {Math.abs(totalGainPercent).toFixed(2)}%
+                {Math.abs(totalGainPercent).toFixed(1)}%
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-2xl p-6">
+            <p className="text-zinc-500 text-xs font-medium mb-2 uppercase tracking-wider">Est. Annual Income</p>
+            <div className="flex items-end space-x-3">
+              <p className="text-3xl font-light tracking-tight text-blue-400">{formatCurrency(annualDividend)}</p>
+              <div className="flex items-center pb-1 text-sm font-medium text-blue-400/70">
+                {portfolioYield.toFixed(2)}% yield
               </div>
             </div>
           </div>
@@ -331,8 +347,15 @@ export default function Dashboard() {
               data={chartData} 
               period={period} 
               onPeriodChange={setPeriod} 
+              showBenchmark={showBenchmark}
+              onToggleBenchmark={() => setShowBenchmark(!showBenchmark)}
             />
           </div>
+        )}
+
+        {/* Allocation Insights */}
+        {assets.length > 0 && (
+          <AllocationCharts assets={assets} quotes={quotes} />
         )}
 
         {/* Assets List */}

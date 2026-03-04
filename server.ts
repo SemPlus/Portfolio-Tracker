@@ -233,22 +233,62 @@ app.get("/api/search", async (req, res) => {
   }
 });
 
+// Helper for currency conversion
+const exchangeRateCache: Record<string, { rate: number, timestamp: number }> = {};
+const CACHE_DURATION = 1000 * 60 * 60; // 1 hour
+
+async function getExchangeRate(from: string, to: string): Promise<number> {
+  if (from === to) return 1;
+  const pair = `${from}${to}=X`;
+  
+  const cached = exchangeRateCache[pair];
+  if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
+    return cached.rate;
+  }
+
+  try {
+    const quote = await yahooFinance.quote(pair) as any;
+    const rate = quote?.regularMarketPrice || 1;
+    exchangeRateCache[pair] = { rate, timestamp: Date.now() };
+    return rate;
+  } catch (e) {
+    console.error(`Failed to fetch exchange rate for ${pair}:`, e);
+    return cached?.rate || 1;
+  }
+}
+
 app.get("/api/quotes", async (req, res) => {
   const symbols = req.query.symbols as string;
   if (!symbols) return res.json({});
 
   try {
     const symbolArray = symbols.split(",");
-    const quotes = await yahooFinance.quote(symbolArray) as any;
+    // Use quoteSummary for more details like sector/industry
+    const quotes = await Promise.all(symbolArray.map(async (symbol) => {
+      try {
+        const [quote, summary] = await Promise.all([
+          yahooFinance.quote(symbol),
+          yahooFinance.quoteSummary(symbol, { modules: ["assetProfile", "summaryDetail", "defaultKeyStatistics"] }).catch(() => null)
+        ]);
+        
+        return {
+          ...(quote as any),
+          sector: summary?.assetProfile?.sector,
+          industry: summary?.assetProfile?.industry,
+          dividendYield: summary?.summaryDetail?.dividendYield,
+          trailingAnnualDividendRate: summary?.summaryDetail?.trailingAnnualDividendRate,
+          marketCap: summary?.summaryDetail?.marketCap || summary?.defaultKeyStatistics?.marketCap
+        };
+      } catch (e) {
+        console.error(`Failed to fetch details for ${symbol}:`, e);
+        return yahooFinance.quote(symbol).catch(() => null);
+      }
+    }));
     
     const result: Record<string, any> = {};
-    if (Array.isArray(quotes)) {
-       quotes.forEach(q => {
-         result[q.symbol] = q;
-       });
-    } else if (quotes) {
-       result[quotes.symbol] = quotes;
-    }
+    quotes.forEach(q => {
+      if (q) result[q.symbol] = q;
+    });
     
     res.json(result);
   } catch (error) {
@@ -352,12 +392,32 @@ app.get("/api/history", async (req, res) => {
         return [];
       });
     });
+
+    // Add benchmark (SPY) to history promises
+    const benchmarkSymbol = 'SPY';
+    const benchmarkPromise = (period === '1D' 
+      ? yahooFinance.chart(benchmarkSymbol, { period1: startDate, period2: endDate, interval: '15m' }).then(res => res.quotes?.map(q => ({ date: q.date, close: q.close || q.adjclose || 0 })) || [])
+      : yahooFinance.historical(benchmarkSymbol, { period1: startDate, period2: endDate, interval: '1d' })
+    ).catch(() => []);
     
-    const historyResults = await Promise.all(historyPromises);
+    const [historyResultsRaw, benchmarkHistory] = await Promise.all([
+      Promise.all(historyPromises),
+      benchmarkPromise
+    ]);
+
+    const historyResults = historyResultsRaw as any[][];
     
     // Process and aggregate data by date
-    const aggregatedData: Record<string, { date: string, totalValue: number, totalInvested: number }> = {};
+    const aggregatedData: Record<string, { date: string, totalValue: number, totalInvested: number, benchmarkValue?: number }> = {};
     
+    // Get exchange rates for all asset currencies to USD (base)
+    const currencies = [...new Set(assets.map(a => a.currency as string))];
+    const rates: Record<string, number> = {};
+    await Promise.all(currencies.map(async (curr) => {
+      const c = curr as string;
+      rates[c] = await getExchangeRate(c, 'USD');
+    }));
+
     historyResults.forEach((symbolHistory, index) => {
       const symbol = symbols[index];
       const symbolAssets = assetsWithQuantities.filter(a => a.symbol === symbol);
@@ -377,8 +437,9 @@ app.get("/api/history", async (req, res) => {
           // Only include if asset was purchased before or on this day
           const assetDate = new Date(asset.purchase_date);
           if (day.date >= assetDate) {
-             dailyValue += (asset.calculatedQuantity || 0) * day.close;
-             dailyInvested += asset.calculatedInvestedAmount || 0;
+             const rate = rates[asset.currency] || 1;
+             dailyValue += (asset.calculatedQuantity || 0) * day.close * rate;
+             dailyInvested += (asset.calculatedInvestedAmount || 0) * rate;
           }
         });
         
@@ -386,6 +447,20 @@ app.get("/api/history", async (req, res) => {
         aggregatedData[dateStr].totalInvested += dailyInvested;
       });
     });
+
+    // Add benchmark data to aggregated points
+    if (benchmarkHistory && (benchmarkHistory as any[]).length > 0) {
+      const firstBenchmarkPrice = (benchmarkHistory as any[])[0].close;
+      const firstPortfolioValue = Object.values(aggregatedData).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())[0]?.totalValue || 1;
+
+      (benchmarkHistory as any[]).forEach(day => {
+        const dateStr = period === '1D' ? day.date.toISOString() : format(day.date, 'yyyy-MM-dd');
+        if (aggregatedData[dateStr]) {
+          // Normalize benchmark to start at the same value as portfolio for comparison
+          aggregatedData[dateStr].benchmarkValue = (day.close / firstBenchmarkPrice) * firstPortfolioValue;
+        }
+      });
+    }
     
     // Convert to array and sort by date
     const chartData = Object.values(aggregatedData).sort((a: any, b: any) => 

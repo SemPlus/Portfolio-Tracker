@@ -24,10 +24,22 @@ export interface Quote {
   currency: string;
   shortName?: string;
   longName?: string;
+  sector?: string;
+  industry?: string;
+  dividendYield?: number;
+  trailingAnnualDividendRate?: number;
+  marketCap?: number;
 }
 
 export interface ChartDataPoint {
   date: string;
   totalValue: number;
   totalInvested: number;
+  benchmarkValue?: number;
+}
+
+export interface AllocationData {
+  name: string;
+  value: number;
+  percentage: number;
 }
