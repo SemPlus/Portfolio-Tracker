@@ -1,7 +1,8 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import Database from "better-sqlite3";
-import YahooFinance from "yahoo-finance2";
+import yf from "yahoo-finance2";
+const yahooFinance = yf as any;
 import { format, subDays, subMonths, subYears, isAfter } from "date-fns";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -9,7 +10,7 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const yahooFinance = new YahooFinance({ 
+yahooFinance.setGlobalConfig({ 
   suppressNotices: ['yahooSurvey', 'ripHistorical'],
   validation: { logErrors: false }
 });
@@ -19,31 +20,52 @@ const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json());
 
+// Request logging middleware
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+  next();
+});
+
 // Database setup
 // On Vercel, /tmp is the only writable directory
 const dbPath = process.env.VERCEL ? path.join("/tmp", "portfolio.db") : "portfolio.db";
-const db = new Database(dbPath);
+console.log(`Using database at: ${dbPath}`);
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS portfolios (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
+let db: Database.Database;
+try {
+  db = new Database(dbPath);
+  console.log("Database opened successfully");
+} catch (error) {
+  console.error("Failed to open database:", error);
+  process.exit(1);
+}
 
-  CREATE TABLE IF NOT EXISTS assets (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    portfolio_id INTEGER NOT NULL DEFAULT 1,
-    symbol TEXT NOT NULL,
-    type TEXT NOT NULL,
-    quantity REAL,
-    invested_amount REAL,
-    currency TEXT NOT NULL DEFAULT 'USD',
-    purchase_date TEXT NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (portfolio_id) REFERENCES portfolios(id)
-  );
-`);
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS portfolios (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS assets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      portfolio_id INTEGER NOT NULL DEFAULT 1,
+      symbol TEXT NOT NULL,
+      type TEXT NOT NULL,
+      quantity REAL,
+      invested_amount REAL,
+      currency TEXT NOT NULL DEFAULT 'USD',
+      purchase_date TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (portfolio_id) REFERENCES portfolios(id)
+    );
+  `);
+  console.log("Database schema initialized");
+} catch (error) {
+  console.error("Failed to initialize database schema:", error);
+  process.exit(1);
+}
 
 // Ensure at least one portfolio exists
 const defaultPortfolio = db.prepare("SELECT * FROM portfolios WHERE id = 1").get();
@@ -488,8 +510,7 @@ app.get("/api/history", async (req, res) => {
   }
 });
 
-async function startServer() {
-  // Get historical data for a single asset
+// Get historical data for a single asset
 app.get("/api/asset-history/:id", async (req, res) => {
   const { id } = req.params;
   const { period = '1M' } = req.query;
@@ -624,6 +645,15 @@ app.post("/api/import", (req, res) => {
   }
 });
 
+// Serve static files in production
+if (process.env.NODE_ENV === "production" || process.env.VERCEL) {
+  app.use(express.static("dist"));
+  app.get("*", (req, res) => {
+    res.sendFile(path.resolve(__dirname, "dist", "index.html"));
+  });
+}
+
+async function startServer() {
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
     const vite = await createViteServer({
@@ -631,12 +661,6 @@ app.post("/api/import", (req, res) => {
       appType: "spa",
     });
     app.use(vite.middlewares);
-  } else {
-    app.use(express.static("dist"));
-    // SPA catch-all
-    app.get("*", (req, res) => {
-      res.sendFile(path.resolve(__dirname, "dist", "index.html"));
-    });
   }
 
   // Only listen if not in a serverless environment
