@@ -3,6 +3,11 @@ import { createServer as createViteServer } from "vite";
 import Database from "better-sqlite3";
 import YahooFinance from "yahoo-finance2";
 import { format, subDays, subMonths, subYears, isAfter } from "date-fns";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const yahooFinance = new YahooFinance({ 
   suppressNotices: ['yahooSurvey', 'ripHistorical'],
@@ -10,12 +15,14 @@ const yahooFinance = new YahooFinance({
 });
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json());
 
 // Database setup
-const db = new Database("portfolio.db");
+// On Vercel, /tmp is the only writable directory
+const dbPath = process.env.VERCEL ? path.join("/tmp", "portfolio.db") : "portfolio.db";
+const db = new Database(dbPath);
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS portfolios (
@@ -90,6 +97,13 @@ if (!tableInfo.some(col => col.name === 'portfolio_id')) {
 })();
 
 // API Routes
+app.get("/api/health", (req, res) => {
+  res.json({ 
+    status: "ok", 
+    env: process.env.VERCEL ? "vercel" : "local",
+    db: dbPath
+  });
+});
 
 // Get all portfolios
 app.get("/api/portfolios", (req, res) => {
@@ -611,7 +625,7 @@ app.post("/api/import", (req, res) => {
 });
 
   // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
+  if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -619,11 +633,20 @@ app.post("/api/import", (req, res) => {
     app.use(vite.middlewares);
   } else {
     app.use(express.static("dist"));
+    // SPA catch-all
+    app.get("*", (req, res) => {
+      res.sendFile(path.resolve(__dirname, "dist", "index.html"));
+    });
   }
 
-app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
+  // Only listen if not in a serverless environment
+  if (!process.env.VERCEL) {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
+  }
 }
 
 startServer();
+
+export default app;
