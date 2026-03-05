@@ -291,18 +291,23 @@ app.delete("/api/assets/:id", (req, res) => {
 
 // Get real-time quotes for multiple symbols
 app.get("/api/search", async (req, res) => {
-  const q = req.query.q as string;
+  const q = (req.query.q as string || "").trim();
   if (!q) return res.json([]);
 
   try {
-    const results = await yahooFinance.search(q);
-    res.json(results.quotes || []);
+    console.log(`Searching for: ${q}`);
+    const results = await yahooFinance.search(q, { quotesCount: 10, newsCount: 0 });
+    console.log(`Search results for "${q}":`, results.quotes?.length || 0, "quotes found");
+    // Filter out results that don't have a symbol
+    const validQuotes = (results.quotes || []).filter((q: any) => q.symbol);
+    res.json(validQuotes);
   } catch (error: any) {
+    console.error("Error searching symbols:", error);
     if (error.result && error.result.quotes) {
       // Return partial results even if validation fails
-      return res.json(error.result.quotes);
+      const validQuotes = error.result.quotes.filter((q: any) => q.symbol);
+      return res.json(validQuotes);
     }
-    console.error("Error searching symbols:", error);
     res.status(500).json({ error: "Failed to search symbols" });
   }
 });

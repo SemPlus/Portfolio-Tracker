@@ -53,14 +53,15 @@ export default function AddAssetModal({ isOpen, onClose, onAdd, portfolios, defa
 
   useEffect(() => {
     const searchSymbols = async () => {
-      if (!symbol || symbol.length < 2) {
+      const trimmedSymbol = symbol.trim();
+      if (!trimmedSymbol || trimmedSymbol.length < 2) {
         setSearchResults([]);
         return;
       }
       
       setIsSearching(true);
       try {
-        const res = await fetch(`/api/search?q=${symbol}`);
+        const res = await fetch(`/api/search?q=${encodeURIComponent(trimmedSymbol)}`);
         if (res.ok) {
           const data = await res.json();
           setSearchResults(data);
@@ -143,30 +144,36 @@ export default function AddAssetModal({ isOpen, onClose, onAdd, portfolios, defa
               )}
             </div>
             
-            {showDropdown && searchResults.length > 0 && (
+            {showDropdown && symbol.length >= 2 && !isSearching && (
               <div className="absolute z-10 w-full mt-1 bg-zinc-800 border border-zinc-700 rounded-xl shadow-xl max-h-60 overflow-y-auto">
-                {searchResults.map((result, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    onClick={() => {
-                      setSymbol(result.symbol);
-                      if (result.quoteType === 'CRYPTOCURRENCY') setType('Crypto');
-                      else if (result.quoteType === 'ETF') setType('ETF');
-                      else setType('Stock');
-                      setShowDropdown(false);
-                    }}
-                    className="w-full text-left px-4 py-3 hover:bg-zinc-700/50 transition-colors border-b border-zinc-700/50 last:border-0 flex justify-between items-center"
-                  >
-                    <div>
-                      <div className="font-medium text-zinc-100">{result.symbol}</div>
-                      <div className="text-xs text-zinc-400 truncate max-w-[200px]">{result.shortname || result.longname}</div>
-                    </div>
-                    <div className="text-xs font-medium text-zinc-500 bg-zinc-700/50 px-2 py-1 rounded">
-                      {result.quoteType}
-                    </div>
-                  </button>
-                ))}
+                {searchResults.length > 0 ? (
+                  searchResults.map((result, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => {
+                        setSymbol(result.symbol);
+                        if (result.quoteType === 'CRYPTOCURRENCY') setType('Crypto');
+                        else if (result.quoteType === 'ETF') setType('ETF');
+                        else setType('Stock');
+                        setShowDropdown(false);
+                      }}
+                      className="w-full text-left px-4 py-3 hover:bg-zinc-700/50 transition-colors border-b border-zinc-700/50 last:border-0 flex justify-between items-center"
+                    >
+                      <div>
+                        <div className="font-medium text-zinc-100">{result.symbol}</div>
+                        <div className="text-xs text-zinc-400 truncate max-w-[200px]">{result.shortname || result.longname}</div>
+                      </div>
+                      <div className="text-xs font-medium text-zinc-500 bg-zinc-700/50 px-2 py-1 rounded">
+                        {result.quoteType}
+                      </div>
+                    </button>
+                  ))
+                ) : (
+                  <div className="px-4 py-6 text-center text-zinc-500 text-sm">
+                    No results found for "{symbol}"
+                  </div>
+                )}
               </div>
             )}
           </div>
