@@ -144,9 +144,14 @@ export default function AddAssetModal({ isOpen, onClose, onAdd, portfolios, defa
               )}
             </div>
             
-            {showDropdown && symbol.length >= 2 && !isSearching && (
+            {showDropdown && symbol.length >= 2 && (
               <div className="absolute z-10 w-full mt-1 bg-zinc-800 border border-zinc-700 rounded-xl shadow-xl max-h-60 overflow-y-auto">
-                {searchResults.length > 0 ? (
+                {isSearching ? (
+                  <div className="px-4 py-6 text-center text-zinc-500 text-sm flex items-center justify-center gap-2">
+                    <div className="animate-spin h-4 w-4 border-2 border-emerald-500 border-t-transparent rounded-full"></div>
+                    Searching for "{symbol}"...
+                  </div>
+                ) : searchResults.length > 0 ? (
                   searchResults.map((result, idx) => (
                     <button
                       key={idx}

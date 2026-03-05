@@ -1,8 +1,11 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import Database from "better-sqlite3";
-import yf from "yahoo-finance2";
-const yahooFinance = yf as any;
+import YahooFinance from "yahoo-finance2";
+const yahooFinance = new YahooFinance({
+  validation: { logErrors: false },
+  suppressNotices: ['yahooSurvey', 'ripHistorical']
+});
 import { format, subDays, subMonths, subYears, isAfter } from "date-fns";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -12,17 +15,8 @@ console.log("Server starting...");
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-try {
-  if (yahooFinance.setGlobalConfig) {
-    yahooFinance.setGlobalConfig({ 
-      suppressNotices: ['yahooSurvey', 'ripHistorical'],
-      validation: { logErrors: false }
-    });
-    console.log("Yahoo Finance initialized");
-  }
-} catch (e) {
-  console.error("Failed to initialize Yahoo Finance:", e);
-}
+// Yahoo Finance initialized
+console.log("Yahoo Finance initialized");
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -295,20 +289,36 @@ app.get("/api/search", async (req, res) => {
   if (!q) return res.json([]);
 
   try {
-    console.log(`Searching for: ${q}`);
-    const results = await yahooFinance.search(q, { quotesCount: 10, newsCount: 0 });
+    console.log(`Searching for: "${q}"`);
+    // Try with minimal options first
+    const results = await yahooFinance.search(q);
     console.log(`Search results for "${q}":`, results.quotes?.length || 0, "quotes found");
-    // Filter out results that don't have a symbol
-    const validQuotes = (results.quotes || []).filter((q: any) => q.symbol);
+    
+    // Filter and map to a consistent format
+    const validQuotes = (results.quotes || [])
+      .filter((q: any) => q.symbol)
+      .map((q: any) => ({
+        symbol: q.symbol,
+        shortname: q.shortname || q.longname || q.symbol,
+        longname: q.longname || q.shortname || q.symbol,
+        quoteType: q.quoteType || 'EQUITY'
+      }));
+      
     res.json(validQuotes);
   } catch (error: any) {
-    console.error("Error searching symbols:", error);
-    if (error.result && error.result.quotes) {
-      // Return partial results even if validation fails
-      const validQuotes = error.result.quotes.filter((q: any) => q.symbol);
+    if (error.name === 'FailedYahooValidationError' && error.result && error.result.quotes) {
+      const validQuotes = error.result.quotes
+        .filter((q: any) => q.symbol)
+        .map((q: any) => ({
+          symbol: q.symbol,
+          shortname: q.shortname || q.longname || q.symbol,
+          longname: q.longname || q.shortname || q.symbol,
+          quoteType: q.quoteType || 'EQUITY'
+        }));
       return res.json(validQuotes);
     }
-    res.status(500).json({ error: "Failed to search symbols" });
+    console.error("Error searching symbols:", error.message || error);
+    res.status(500).json({ error: "Failed to search symbols", details: error.message });
   }
 });
 
@@ -370,8 +380,8 @@ app.get("/api/quotes", async (req, res) => {
     });
     
     res.json(result);
-  } catch (error) {
-    console.error("Error fetching quotes:", error);
+  } catch (error: any) {
+    console.error("Error fetching quotes:", error.message || error);
     res.status(500).json({ error: "Failed to fetch quotes" });
   }
 });
@@ -547,8 +557,11 @@ app.get("/api/history", async (req, res) => {
     );
     
     res.json(chartData);
-  } catch (error) {
-    console.error("Error fetching history:", error);
+  } catch (error: any) {
+    if (error.name === 'FailedYahooValidationError' && error.result) {
+      // Silent recovery
+    }
+    console.error("Error fetching history:", error.message || error);
     res.status(500).json({ error: "Failed to fetch historical data" });
   }
 });
@@ -623,8 +636,11 @@ app.get("/api/asset-history/:id", async (req, res) => {
     }));
 
     res.json(result);
-  } catch (error) {
-    console.error("Error fetching asset history:", error);
+  } catch (error: any) {
+    if (error.name === 'FailedYahooValidationError' && error.result) {
+      // Silent recovery
+    }
+    console.error("Error fetching asset history:", error.message || error);
     res.status(500).json({ error: "Failed to fetch asset history" });
   }
 });

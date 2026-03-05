@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Asset, Quote } from '../types';
-import { ChevronDown, ChevronUp, Trash2, TrendingUp, TrendingDown, Activity } from 'lucide-react';
+import { ChevronDown, ChevronUp, Trash2, TrendingUp, TrendingDown, Activity, RefreshCw } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
@@ -16,6 +16,8 @@ export default function AssetCard({ asset, quote, onDelete, portfolioName }: Pro
   const [history, setHistory] = useState<any[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [period, setPeriod] = useState('1M');
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
 
   const periods = ['1D', '1W', '1M', '3M', '1Y', 'ALL'];
 
@@ -222,19 +224,59 @@ export default function AssetCard({ asset, quote, onDelete, portfolioName }: Pro
           </div>
           
           <div className="flex justify-end">
-            <button 
-              type="button"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                console.log(`AssetCard: Delete button clicked for asset ID: ${asset.id}`);
-                onDelete(asset.id);
-              }}
-              className="flex items-center text-rose-500 hover:text-rose-400 text-sm font-medium px-3 py-2 rounded-lg hover:bg-rose-500/10 transition-colors cursor-pointer"
-            >
-              <Trash2 size={16} className="mr-2" />
-              Remove Asset
-            </button>
+            {isDeleting ? (
+              <div className="flex items-center space-x-3 bg-rose-500/5 border border-rose-500/20 p-2 rounded-xl">
+                <span className="text-rose-200 text-xs font-medium uppercase tracking-wider">Confirm removal?</span>
+                <button 
+                  type="button"
+                  disabled={isProcessing}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setIsDeleting(false);
+                  }}
+                  className="text-zinc-400 hover:text-zinc-200 text-sm font-medium px-2 py-1 rounded-lg transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="button"
+                  disabled={isProcessing}
+                  onClick={async (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setIsProcessing(true);
+                    try {
+                      await onDelete(asset.id);
+                    } catch (err) {
+                      console.error('Deletion failed:', err);
+                      setIsProcessing(false);
+                    }
+                  }}
+                  className="bg-rose-500 hover:bg-rose-600 text-white text-sm font-semibold px-4 py-1.5 rounded-lg transition-all shadow-lg shadow-rose-500/20 disabled:opacity-70 flex items-center"
+                >
+                  {isProcessing ? (
+                    <>
+                      <RefreshCw size={14} className="mr-2 animate-spin" />
+                      Deleting...
+                    </>
+                  ) : 'Delete'}
+                </button>
+              </div>
+            ) : (
+              <button 
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setIsDeleting(true);
+                }}
+                className="flex items-center text-rose-500 hover:text-rose-400 text-sm font-medium px-3 py-2 rounded-lg hover:bg-rose-500/10 transition-colors cursor-pointer"
+              >
+                <Trash2 size={16} className="mr-2" />
+                Remove Asset
+              </button>
+            )}
           </div>
         </div>
       )}

@@ -165,15 +165,12 @@ export default function Dashboard() {
   };
 
   const handleDeleteAsset = async (id: number) => {
-    if (!confirm('Are you sure you want to delete this asset?')) return;
-    console.log(`handleDeleteAsset called with ID: ${id}`);
     try {
       const res = await fetch(`/api/assets/${id}`, { method: 'DELETE' });
       if (!res.ok) {
         console.error('Failed to delete asset:', res.statusText);
         return;
       }
-      console.log('Asset deleted successfully, fetching new data');
       await fetchData();
     } catch (error) {
       console.error('Error deleting asset:', error);
