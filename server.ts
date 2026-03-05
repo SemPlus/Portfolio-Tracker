@@ -7,13 +7,22 @@ import { format, subDays, subMonths, subYears, isAfter } from "date-fns";
 import path from "path";
 import { fileURLToPath } from "url";
 
+console.log("Server starting...");
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-yahooFinance.setGlobalConfig({ 
-  suppressNotices: ['yahooSurvey', 'ripHistorical'],
-  validation: { logErrors: false }
-});
+try {
+  if (yahooFinance.setGlobalConfig) {
+    yahooFinance.setGlobalConfig({ 
+      suppressNotices: ['yahooSurvey', 'ripHistorical'],
+      validation: { logErrors: false }
+    });
+    console.log("Yahoo Finance initialized");
+  }
+} catch (e) {
+  console.error("Failed to initialize Yahoo Finance:", e);
+}
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -221,6 +230,35 @@ app.post("/api/assets", async (req, res) => {
   } catch (error) {
     console.error("Error adding asset:", error);
     res.status(500).json({ error: "Failed to add asset. Please check the symbol." });
+  }
+});
+
+// Delete portfolio
+app.delete("/api/portfolios/:id", (req, res) => {
+  const { id } = req.params;
+  const idNum = parseInt(id, 10);
+  
+  if (isNaN(idNum)) {
+    return res.status(400).json({ error: "Invalid portfolio ID" });
+  }
+
+  if (idNum === 1) {
+    return res.status(400).json({ error: "Cannot delete the default portfolio" });
+  }
+
+  try {
+    const transaction = db.transaction(() => {
+      // Delete assets first
+      db.prepare("DELETE FROM assets WHERE portfolio_id = ?").run(idNum);
+      // Delete portfolio
+      db.prepare("DELETE FROM portfolios WHERE id = ?").run(idNum);
+    });
+    
+    transaction();
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Error deleting portfolio:", error);
+    res.status(500).json({ error: "Failed to delete portfolio" });
   }
 });
 
@@ -654,13 +692,20 @@ if (process.env.NODE_ENV === "production" || process.env.VERCEL) {
 }
 
 async function startServer() {
+  console.log("Starting server function called...");
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
+    console.log("Initializing Vite middleware...");
+    try {
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
+      console.log("Vite middleware initialized");
+    } catch (e) {
+      console.error("Failed to initialize Vite middleware:", e);
+    }
   }
 
   // Only listen if not in a serverless environment

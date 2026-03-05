@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, RefreshCw, TrendingUp, TrendingDown, Briefcase, FolderPlus, ChevronDown, Download, Upload } from 'lucide-react';
+import { Plus, RefreshCw, TrendingUp, TrendingDown, Briefcase, FolderPlus, ChevronDown, Download, Upload, Trash2 } from 'lucide-react';
 import { Asset, Quote, ChartDataPoint, Portfolio } from '../types';
 import AssetCard from './AssetCard';
 import PortfolioChart from './PortfolioChart';
@@ -7,6 +7,7 @@ import AddAssetModal from './AddAssetModal';
 import AllocationCharts from './AllocationCharts';
 
 export default function Dashboard() {
+  console.log('Dashboard component rendering');
   const [assets, setAssets] = useState<Asset[]>([]);
   const [quotes, setQuotes] = useState<Record<string, Quote>>({});
   const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
@@ -22,16 +23,19 @@ export default function Dashboard() {
 
   const fetchData = async () => {
     console.log('fetchData called');
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+
     try {
       setRefreshing(true);
       
       // Fetch portfolios
-      const portfoliosRes = await fetch('/api/portfolios');
+      const portfoliosRes = await fetch('/api/portfolios', { signal: controller.signal });
       const portfoliosData = await portfoliosRes.json();
       setPortfolios(portfoliosData);
 
       // Fetch assets
-      const assetsRes = await fetch(`/api/assets?portfolio_id=${selectedPortfolioId}`);
+      const assetsRes = await fetch(`/api/assets?portfolio_id=${selectedPortfolioId}`, { signal: controller.signal });
       const assetsData = await assetsRes.json();
       console.log('Assets data fetched:', assetsData);
       setAssets(assetsData);
@@ -39,21 +43,26 @@ export default function Dashboard() {
       if (assetsData.length > 0) {
         // Fetch quotes
         const symbols = [...new Set(assetsData.map((a: Asset) => a.symbol))].join(',');
-        const quotesRes = await fetch(`/api/quotes?symbols=${symbols}`);
+        const quotesRes = await fetch(`/api/quotes?symbols=${symbols}`, { signal: controller.signal });
         const quotesData = await quotesRes.json();
         setQuotes(quotesData);
 
         // Fetch history
-        const historyRes = await fetch(`/api/history?period=${period}&portfolio_id=${selectedPortfolioId}`);
+        const historyRes = await fetch(`/api/history?period=${period}&portfolio_id=${selectedPortfolioId}`, { signal: controller.signal });
         const historyData = await historyRes.json();
         setChartData(historyData);
       } else {
         setQuotes({});
         setChartData([]);
       }
-    } catch (error) {
-      console.error('Error fetching data:', error);
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        console.error('Fetch timed out');
+      } else {
+        console.error('Error fetching data:', error);
+      }
     } finally {
+      clearTimeout(timeoutId);
       setLoading(false);
       setRefreshing(false);
     }
@@ -108,6 +117,11 @@ export default function Dashboard() {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    if (!confirm('Importing data will replace all your current portfolios and assets. Are you sure you want to proceed?')) {
+      e.target.value = '';
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = async (event) => {
       try {
@@ -151,6 +165,7 @@ export default function Dashboard() {
   };
 
   const handleDeleteAsset = async (id: number) => {
+    if (!confirm('Are you sure you want to delete this asset?')) return;
     console.log(`handleDeleteAsset called with ID: ${id}`);
     try {
       const res = await fetch(`/api/assets/${id}`, { method: 'DELETE' });
@@ -162,6 +177,29 @@ export default function Dashboard() {
       await fetchData();
     } catch (error) {
       console.error('Error deleting asset:', error);
+    }
+  };
+
+  const handleDeletePortfolio = async () => {
+    if (selectedPortfolioId === 'all' || selectedPortfolioId === 1) return;
+    
+    const portfolio = portfolios.find(p => p.id === selectedPortfolioId);
+    if (!portfolio) return;
+
+    if (!confirm(`Are you sure you want to delete the portfolio "${portfolio.name}" and all its assets? This action cannot be undone.`)) return;
+
+    try {
+      const res = await fetch(`/api/portfolios/${selectedPortfolioId}`, { method: 'DELETE' });
+      if (res.ok) {
+        setSelectedPortfolioId('all');
+        await fetchData();
+      } else {
+        const err = await res.json();
+        alert(`Failed to delete portfolio: ${err.error}`);
+      }
+    } catch (error) {
+      console.error('Error deleting portfolio:', error);
+      alert('Failed to delete portfolio');
     }
   };
 
@@ -228,6 +266,15 @@ export default function Dashboard() {
                   >
                     <FolderPlus size={16} />
                   </button>
+                  {selectedPortfolioId !== 'all' && selectedPortfolioId !== 1 && (
+                    <button 
+                      onClick={handleDeletePortfolio}
+                      className="text-zinc-500 hover:text-red-500 transition-colors ml-1"
+                      title="Delete Portfolio"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
