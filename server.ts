@@ -1,5 +1,4 @@
 import express from "express";
-import { createServer as createViteServer } from "vite";
 import Database from "better-sqlite3";
 import YahooFinance from "yahoo-finance2";
 const yahooFinance = new YahooFinance({
@@ -34,90 +33,97 @@ app.use((req, res, next) => {
 const dbPath = process.env.VERCEL ? path.join("/tmp", "portfolio.db") : "portfolio.db";
 console.log(`Using database at: ${dbPath}`);
 
-let db: Database.Database;
-try {
-  db = new Database(dbPath);
-  console.log("Database opened successfully");
-} catch (error) {
-  console.error("Failed to open database:", error);
-  process.exit(1);
-}
+let db: Database.Database | null = null;
 
-try {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS portfolios (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
+function getDb(): Database.Database {
+  if (db) return db;
+  
+  try {
+    db = new Database(dbPath);
+    console.log("Database opened successfully");
+    
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS portfolios (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
 
-    CREATE TABLE IF NOT EXISTS assets (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      portfolio_id INTEGER NOT NULL DEFAULT 1,
-      symbol TEXT NOT NULL,
-      type TEXT NOT NULL,
-      quantity REAL,
-      invested_amount REAL,
-      currency TEXT NOT NULL DEFAULT 'USD',
-      purchase_date TEXT NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (portfolio_id) REFERENCES portfolios(id)
-    );
-  `);
-  console.log("Database schema initialized");
-} catch (error) {
-  console.error("Failed to initialize database schema:", error);
-  process.exit(1);
-}
+      CREATE TABLE IF NOT EXISTS assets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        portfolio_id INTEGER NOT NULL DEFAULT 1,
+        symbol TEXT NOT NULL,
+        type TEXT NOT NULL,
+        quantity REAL,
+        invested_amount REAL,
+        currency TEXT NOT NULL DEFAULT 'USD',
+        purchase_date TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (portfolio_id) REFERENCES portfolios(id)
+      );
+    `);
+    console.log("Database schema initialized");
+    
+    // Ensure at least one portfolio exists
+    const defaultPortfolio = db.prepare("SELECT * FROM portfolios WHERE id = 1").get();
+    if (!defaultPortfolio) {
+      db.prepare("INSERT INTO portfolios (id, name) VALUES (1, 'Main Portfolio')").run();
+    }
 
-// Ensure at least one portfolio exists
-const defaultPortfolio = db.prepare("SELECT * FROM portfolios WHERE id = 1").get();
-if (!defaultPortfolio) {
-  db.prepare("INSERT INTO portfolios (id, name) VALUES (1, 'Main Portfolio')").run();
-}
-
-// Check if portfolio_id column exists in assets (for migration)
-const tableInfo = db.prepare("PRAGMA table_info(assets)").all() as any[];
-if (!tableInfo.some(col => col.name === 'portfolio_id')) {
-  db.exec("ALTER TABLE assets ADD COLUMN portfolio_id INTEGER NOT NULL DEFAULT 1 REFERENCES portfolios(id)");
+    // Check if portfolio_id column exists in assets (for migration)
+    const tableInfo = db.prepare("PRAGMA table_info(assets)").all() as any[];
+    if (!tableInfo.some(col => col.name === 'portfolio_id')) {
+      db.exec("ALTER TABLE assets ADD COLUMN portfolio_id INTEGER NOT NULL DEFAULT 1 REFERENCES portfolios(id)");
+    }
+    
+    return db;
+  } catch (error) {
+    console.error("Failed to open or initialize database:", error);
+    throw error;
+  }
 }
 
 // Data migration: Fill missing quantity or invested_amount for existing assets
 (async () => {
-  const incompleteAssets = db.prepare("SELECT * FROM assets WHERE quantity IS NULL OR invested_amount IS NULL").all() as any[];
-  for (const asset of incompleteAssets) {
-    try {
-      const pDate = new Date(asset.purchase_date);
-      const history = await yahooFinance.historical(asset.symbol, {
-        period1: pDate,
-        period2: new Date(pDate.getTime() + 86400000 * 7),
-        interval: '1d'
-      }).catch(() => []);
+  try {
+    const database = getDb();
+    const incompleteAssets = database.prepare("SELECT * FROM assets WHERE quantity IS NULL OR invested_amount IS NULL").all() as any[];
+    for (const asset of incompleteAssets) {
+      try {
+        const pDate = new Date(asset.purchase_date);
+        const history = await yahooFinance.historical(asset.symbol, {
+          period1: pDate,
+          period2: new Date(pDate.getTime() + 86400000 * 7),
+          interval: '1d'
+        }).catch(() => []);
 
-      let purchasePrice = (history && history.length > 0) ? history[0].close : null;
-      
-      if (!purchasePrice) {
-        const quote = await yahooFinance.quote(asset.symbol).catch(() => null);
-        purchasePrice = quote?.regularMarketPrice || null;
-      }
-
-      if (purchasePrice) {
-        let finalQuantity = asset.quantity;
-        let finalInvestedAmount = asset.invested_amount;
-
-        if (!finalQuantity && finalInvestedAmount) {
-          finalQuantity = finalInvestedAmount / purchasePrice;
-        } else if (!finalInvestedAmount && finalQuantity) {
-          finalInvestedAmount = finalQuantity * purchasePrice;
+        let purchasePrice = (history && history.length > 0) ? history[0].close : null;
+        
+        if (!purchasePrice) {
+          const quote = await yahooFinance.quote(asset.symbol).catch(() => null);
+          purchasePrice = quote?.regularMarketPrice || null;
         }
 
-        db.prepare("UPDATE assets SET quantity = ?, invested_amount = ? WHERE id = ?")
-          .run(finalQuantity, finalInvestedAmount, asset.id);
-        console.log(`Migrated asset ${asset.symbol} (ID: ${asset.id})`);
+        if (purchasePrice) {
+          let finalQuantity = asset.quantity;
+          let finalInvestedAmount = asset.invested_amount;
+
+          if (!finalQuantity && finalInvestedAmount) {
+            finalQuantity = finalInvestedAmount / purchasePrice;
+          } else if (!finalInvestedAmount && finalQuantity) {
+            finalInvestedAmount = finalQuantity * purchasePrice;
+          }
+
+          database.prepare("UPDATE assets SET quantity = ?, invested_amount = ? WHERE id = ?")
+            .run(finalQuantity, finalInvestedAmount, asset.id);
+          console.log(`Migrated asset ${asset.symbol} (ID: ${asset.id})`);
+        }
+      } catch (err) {
+        console.error(`Failed to migrate asset ${asset.id}:`, err);
       }
-    } catch (err) {
-      console.error(`Failed to migrate asset ${asset.id}:`, err);
     }
+  } catch (err) {
+    console.warn("Migration skipped due to database error");
   }
 })();
 
@@ -133,7 +139,7 @@ app.get("/api/health", (req, res) => {
 // Get all portfolios
 app.get("/api/portfolios", (req, res) => {
   try {
-    const portfolios = db.prepare("SELECT * FROM portfolios ORDER BY created_at ASC").all();
+    const portfolios = getDb().prepare("SELECT * FROM portfolios ORDER BY created_at ASC").all();
     res.json(portfolios);
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch portfolios" });
@@ -145,8 +151,9 @@ app.post("/api/portfolios", (req, res) => {
   const { name } = req.body;
   if (!name) return res.status(400).json({ error: "Name is required" });
   try {
-    const result = db.prepare("INSERT INTO portfolios (name) VALUES (?)").run(name);
-    const newPortfolio = db.prepare("SELECT * FROM portfolios WHERE id = ?").get(result.lastInsertRowid);
+    const database = getDb();
+    const result = database.prepare("INSERT INTO portfolios (name) VALUES (?)").run(name);
+    const newPortfolio = database.prepare("SELECT * FROM portfolios WHERE id = ?").get(result.lastInsertRowid);
     res.status(201).json(newPortfolio);
   } catch (error) {
     res.status(500).json({ error: "Failed to create portfolio" });
@@ -157,11 +164,12 @@ app.post("/api/portfolios", (req, res) => {
 app.get("/api/assets", (req, res) => {
   const { portfolio_id } = req.query;
   try {
+    const database = getDb();
     let assets;
     if (portfolio_id && portfolio_id !== 'all') {
-      assets = db.prepare("SELECT * FROM assets WHERE portfolio_id = ? ORDER BY created_at DESC").all(portfolio_id);
+      assets = database.prepare("SELECT * FROM assets WHERE portfolio_id = ? ORDER BY created_at DESC").all(portfolio_id);
     } else {
-      assets = db.prepare("SELECT * FROM assets ORDER BY created_at DESC").all();
+      assets = database.prepare("SELECT * FROM assets ORDER BY created_at DESC").all();
     }
     res.json(assets);
   } catch (error) {
@@ -178,6 +186,7 @@ app.post("/api/assets", async (req, res) => {
   }
 
   try {
+    const database = getDb();
     // Verify symbol exists and get current quote
     const quote = await yahooFinance.quote(symbol) as any;
     
@@ -204,7 +213,7 @@ app.post("/api/assets", async (req, res) => {
       }
     }
 
-    const stmt = db.prepare(`
+    const stmt = database.prepare(`
       INSERT INTO assets (symbol, type, quantity, invested_amount, currency, purchase_date, portfolio_id)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
@@ -218,7 +227,7 @@ app.post("/api/assets", async (req, res) => {
       purchase_date,
       portfolio_id || 1
     );
-    const newAsset = db.prepare("SELECT * FROM assets WHERE id = ?").get(result.lastInsertRowid);
+    const newAsset = database.prepare("SELECT * FROM assets WHERE id = ?").get(result.lastInsertRowid);
     
     res.status(201).json(newAsset);
   } catch (error) {
@@ -241,11 +250,12 @@ app.delete("/api/portfolios/:id", (req, res) => {
   }
 
   try {
-    const transaction = db.transaction(() => {
+    const database = getDb();
+    const transaction = database.transaction(() => {
       // Delete assets first
-      db.prepare("DELETE FROM assets WHERE portfolio_id = ?").run(idNum);
+      database.prepare("DELETE FROM assets WHERE portfolio_id = ?").run(idNum);
       // Delete portfolio
-      db.prepare("DELETE FROM portfolios WHERE id = ?").run(idNum);
+      database.prepare("DELETE FROM portfolios WHERE id = ?").run(idNum);
     });
     
     transaction();
@@ -267,7 +277,8 @@ app.delete("/api/assets/:id", (req, res) => {
   }
 
   try {
-    const stmt = db.prepare("DELETE FROM assets WHERE id = ?");
+    const database = getDb();
+    const stmt = database.prepare("DELETE FROM assets WHERE id = ?");
     const result = stmt.run(idNum);
     console.log(`Delete result:`, result);
     
@@ -291,7 +302,7 @@ app.get("/api/search", async (req, res) => {
   try {
     console.log(`Searching for: "${q}"`);
     // Try with minimal options first
-    const results = await yahooFinance.search(q);
+    const results = await (yahooFinance as any).search(q, {}, { validate: false });
     console.log(`Search results for "${q}":`, results.quotes?.length || 0, "quotes found");
     
     // Filter and map to a consistent format
@@ -306,7 +317,11 @@ app.get("/api/search", async (req, res) => {
       
     res.json(validQuotes);
   } catch (error: any) {
-    if (error.name === 'FailedYahooValidationError' && error.result && error.result.quotes) {
+    console.error(`Search error for "${q}":`, error.message || error);
+    
+    // Check for validation errors which might still contain results
+    if (error.result && error.result.quotes) {
+      console.log(`Recovering ${error.result.quotes.length} quotes from validation error`);
       const validQuotes = error.result.quotes
         .filter((q: any) => q.symbol)
         .map((q: any) => ({
@@ -317,8 +332,12 @@ app.get("/api/search", async (req, res) => {
         }));
       return res.json(validQuotes);
     }
-    console.error("Error searching symbols:", error.message || error);
-    res.status(500).json({ error: "Failed to search symbols", details: error.message });
+    
+    res.status(500).json({ 
+      error: "Failed to search symbols", 
+      details: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 });
 
@@ -356,8 +375,10 @@ app.get("/api/quotes", async (req, res) => {
     const quotes = await Promise.all(symbolArray.map(async (symbol) => {
       try {
         const [quote, summary] = await Promise.all([
-          yahooFinance.quote(symbol),
-          yahooFinance.quoteSummary(symbol, { modules: ["assetProfile", "summaryDetail", "defaultKeyStatistics"] }).catch(() => null)
+          (yahooFinance as any).quote(symbol, {}, { validate: false }),
+          (yahooFinance as any).quoteSummary(symbol, { 
+            modules: ["assetProfile", "summaryDetail", "defaultKeyStatistics"]
+          }, { validate: false }).catch(() => null)
         ]);
         
         return {
@@ -391,11 +412,12 @@ app.get("/api/history", async (req, res) => {
   const { period = '1M', portfolio_id } = req.query;
   
   try {
+    const database = getDb();
     let assets;
     if (portfolio_id && portfolio_id !== 'all') {
-      assets = db.prepare("SELECT * FROM assets WHERE portfolio_id = ?").all(portfolio_id) as any[];
+      assets = database.prepare("SELECT * FROM assets WHERE portfolio_id = ?").all(portfolio_id) as any[];
     } else {
-      assets = db.prepare("SELECT * FROM assets").all() as any[];
+      assets = database.prepare("SELECT * FROM assets").all() as any[];
     }
     
     if (assets.length === 0) return res.json([]);
@@ -572,7 +594,8 @@ app.get("/api/asset-history/:id", async (req, res) => {
   const { period = '1M' } = req.query;
 
   try {
-    const asset = db.prepare("SELECT * FROM assets WHERE id = ?").get(id) as any;
+    const database = getDb();
+    const asset = database.prepare("SELECT * FROM assets WHERE id = ?").get(id) as any;
     if (!asset) return res.status(404).json({ error: "Asset not found" });
 
     const purchaseDate = new Date(asset.purchase_date);
@@ -648,8 +671,9 @@ app.get("/api/asset-history/:id", async (req, res) => {
 // Export data
 app.get("/api/export", (req, res) => {
   try {
-    const portfolios = db.prepare("SELECT * FROM portfolios").all();
-    const assets = db.prepare("SELECT * FROM assets").all();
+    const database = getDb();
+    const portfolios = database.prepare("SELECT * FROM portfolios").all();
+    const assets = database.prepare("SELECT * FROM assets").all();
     res.json({ portfolios, assets, version: 1, timestamp: new Date().toISOString() });
   } catch (error) {
     res.status(500).json({ error: "Failed to export data" });
@@ -665,19 +689,20 @@ app.post("/api/import", (req, res) => {
   }
 
   try {
-    const transaction = db.transaction(() => {
+    const database = getDb();
+    const transaction = database.transaction(() => {
       // Clear existing data
-      db.prepare("DELETE FROM assets").run();
-      db.prepare("DELETE FROM portfolios").run();
+      database.prepare("DELETE FROM assets").run();
+      database.prepare("DELETE FROM portfolios").run();
 
       // Import portfolios
-      const insertPortfolio = db.prepare("INSERT INTO portfolios (id, name, created_at) VALUES (?, ?, ?)");
+      const insertPortfolio = database.prepare("INSERT INTO portfolios (id, name, created_at) VALUES (?, ?, ?)");
       for (const p of portfolios as any[]) {
         insertPortfolio.run(p.id, p.name, p.created_at || new Date().toISOString());
       }
 
       // Import assets
-      const insertAsset = db.prepare(`
+      const insertAsset = database.prepare(`
         INSERT INTO assets (id, portfolio_id, symbol, type, quantity, invested_amount, currency, purchase_date, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
@@ -718,6 +743,7 @@ async function startServer() {
   if (process.env.NODE_ENV !== "production" && !process.env.VERCEL) {
     console.log("Initializing Vite middleware...");
     try {
+      const { createServer: createViteServer } = await import("vite");
       const vite = await createViteServer({
         server: { middlewareMode: true },
         appType: "spa",
