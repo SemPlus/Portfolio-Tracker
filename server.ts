@@ -61,6 +61,14 @@ function getDb(): Database.Database {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (portfolio_id) REFERENCES portfolios(id)
       );
+
+      CREATE TABLE IF NOT EXISTS watchlist (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL UNIQUE,
+        name TEXT,
+        target_price REAL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
     `);
     console.log("Database schema initialized");
     
@@ -291,6 +299,45 @@ app.delete("/api/assets/:id", (req, res) => {
   } catch (error) {
     console.error("Error deleting asset:", error);
     res.status(500).json({ error: "Failed to delete asset" });
+  }
+});
+
+// Watchlist API
+app.get("/api/watchlist", (req, res) => {
+  try {
+    const watchlist = getDb().prepare("SELECT * FROM watchlist ORDER BY created_at DESC").all();
+    res.json(watchlist);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch watchlist" });
+  }
+});
+
+app.post("/api/watchlist", async (req, res) => {
+  const { symbol, name, target_price } = req.body;
+  if (!symbol) return res.status(400).json({ error: "Symbol is required" });
+  
+  try {
+    const database = getDb();
+    // Verify symbol exists
+    const quote = await yahooFinance.quote(symbol).catch(() => null);
+    if (!quote) return res.status(404).json({ error: "Symbol not found" });
+
+    const stmt = database.prepare("INSERT OR REPLACE INTO watchlist (symbol, name, target_price) VALUES (?, ?, ?)");
+    const result = stmt.run(symbol.toUpperCase(), name || (quote as any).shortName || symbol, target_price || null);
+    const newItem = database.prepare("SELECT * FROM watchlist WHERE id = ?").get(result.lastInsertRowid);
+    res.status(201).json(newItem);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to add to watchlist" });
+  }
+});
+
+app.delete("/api/watchlist/:id", (req, res) => {
+  const { id } = req.params;
+  try {
+    getDb().prepare("DELETE FROM watchlist WHERE id = ?").run(id);
+    res.status(204).send();
+  } catch (error) {
+    res.status(500).json({ error: "Failed to delete from watchlist" });
   }
 });
 

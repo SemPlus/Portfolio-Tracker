@@ -7,7 +7,7 @@ interface Props {
   quotes: Record<string, Quote>;
 }
 
-const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
+const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
 
 export default function AllocationCharts({ assets, quotes }: Props) {
   const calculateAllocation = (groupBy: 'type' | 'sector'): AllocationData[] => {
@@ -41,12 +41,12 @@ export default function AllocationCharts({ assets, quotes }: Props) {
     if (active && payload && payload.length) {
       const data = payload[0].payload;
       return (
-        <div className="bg-zinc-900 border border-zinc-800 p-3 rounded-lg shadow-xl">
-          <p className="text-zinc-100 font-medium mb-1">{data.name}</p>
-          <p className="text-emerald-400 text-sm">
+        <div className="bg-slate-900 border border-slate-800 p-3 rounded-xl shadow-xl">
+          <p className="text-white font-bold mb-1">{data.name}</p>
+          <p className="text-blue-400 text-sm font-bold">
             {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(data.value)}
           </p>
-          <p className="text-zinc-500 text-xs">{data.percentage.toFixed(1)}% of portfolio</p>
+          <p className="text-slate-400 text-[10px] font-bold uppercase tracking-wider">{data.percentage.toFixed(1)}% of portfolio</p>
         </div>
       );
     }
@@ -55,8 +55,8 @@ export default function AllocationCharts({ assets, quotes }: Props) {
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
-      <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-2xl p-6">
-        <h3 className="text-lg font-medium text-zinc-100 mb-6">Asset Class Allocation</h3>
+      <div className="glass-card p-6">
+        <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-6">Asset Class Allocation</h3>
         <div className="h-64">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
@@ -68,20 +68,21 @@ export default function AllocationCharts({ assets, quotes }: Props) {
                 outerRadius={80}
                 paddingAngle={5}
                 dataKey="value"
+                stroke="none"
               >
                 {typeData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="none" />
+                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                 ))}
               </Pie>
               <Tooltip content={<CustomTooltip />} />
-              <Legend verticalAlign="bottom" height={36} iconType="circle" />
+              <Legend verticalAlign="bottom" height={36} iconType="circle" wrapperStyle={{ fontSize: '12px', fontWeight: 'bold' }} />
             </PieChart>
           </ResponsiveContainer>
         </div>
       </div>
 
-      <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-2xl p-6">
-        <h3 className="text-lg font-medium text-zinc-100 mb-6">Sector Diversification</h3>
+      <div className="glass-card p-6">
+        <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-6">Sector Diversification</h3>
         <div className="h-64">
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
@@ -93,13 +94,14 @@ export default function AllocationCharts({ assets, quotes }: Props) {
                 outerRadius={80}
                 paddingAngle={5}
                 dataKey="value"
+                stroke="none"
               >
                 {sectorData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="none" />
+                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                 ))}
               </Pie>
               <Tooltip content={<CustomTooltip />} />
-              <Legend verticalAlign="bottom" height={36} iconType="circle" />
+              <Legend verticalAlign="bottom" height={36} iconType="circle" wrapperStyle={{ fontSize: '12px', fontWeight: 'bold' }} />
             </PieChart>
           </ResponsiveContainer>
         </div>
